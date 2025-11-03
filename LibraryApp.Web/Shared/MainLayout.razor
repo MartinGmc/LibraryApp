@@ -1,0 +1,65 @@
+@namespace LibraryApp.Web
+@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Library App</PageTitle>
+
+<div class="page">
+    <AuthorizeView>
+        <Authorized>
+            <nav class="navbar navbar-expand-lg navbar-light bg-light border-bottom mb-3">
+                <div class="container-fluid">
+                    <span class="navbar-brand mb-0 h1">Library App</span>
+                    <div class="d-flex align-items-center">
+                        <span class="me-3 text-muted">@context.User.Identity?.Name</span>
+                        <button class="btn btn-outline-danger" @onclick="HandleLogout" disabled="@isLoggingOut">
+                            @if (isLoggingOut)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            }
+                            <i class="bi bi-box-arrow-right"></i> Log Out
+                        </button>
+                    </div>
+                </div>
+            </nav>
+        </Authorized>
+    </AuthorizeView>
+    <main>
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    private bool isLoggingOut = false;
+
+    private async Task HandleLogout()
+    {
+        if (isLoggingOut)
+            return;
+
+        isLoggingOut = true;
+
+        try
+        {
+            // Use JavaScript to make the logout request from the browser
+            // This ensures cookies are cleared in the browser's cookie jar
+            var result = await JSRuntime.InvokeAsync<string>("logoutUser");
+
+            // Always redirect to login page with forceLoad to ensure a full page reload
+            // This clears any cached authentication state and establishes a new SignalR connection
+            Navigation.NavigateTo("/Login", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            // Even if there's an error, redirect to login
+            Navigation.NavigateTo("/Login", forceLoad: true);
+        }
+        // Note: isLoggingOut doesn't need to be reset since we're doing a full page reload
+    }
+}
+

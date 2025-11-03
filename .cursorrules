@@ -1,0 +1,49 @@
+Tech Stack & Environment
+
+Use .NET 8 for all backend code (ASP.NET Core).
+Frontend: Blazor Server/WebAssembly (prefer Server for simplicity unless specified).
+Database: sqllite
+Hosting: Azure App Service (Web App). Use Azure SDKs for configuration/secrets.
+Local dev: Run with dotnet run; use appsettings.Development.json for local SQL (e.g., LocalDB or SQLite for testing).
+
+Architecture
+
+Follow Clean Architecture: Separate into Layers (Core/Domain, Application, Infrastructure, Presentation).
+
+Domain: Entities, Value Objects, Interfaces.
+Application: Use Cases/Services, DTOs, MediatR for CQRS if needed.
+Infrastructure: EF DbContext, Repositories, Azure integrations. Include migration setup here.
+Presentation: Blazor components/pages, API controllers.
+
+
+Dependency Injection: Register all services in Program.cs (use builder.Services).
+Async/Await: All I/O operations (DB, HTTP) must be async.
+
+Best Practices
+
+Security: Use HTTPS only. Validate inputs (FluentValidation). Store secrets in Azure Key Vault/User Secrets (local). Auth: Azure AD B2C or JWT.
+Logging: Use Serilog (structured logs to file).
+Error Handling: Global exception handler. Log with Serilog (structured logs to Azure App Insights).
+Performance: Use IAsyncEnumerable for large datasets. Paginate API responses. Cache with IMemoryCache.
+Testing: Write xUnit unit tests for services. Integration tests with TestServer/InMemory DB. Aim for 80%+ coverage.
+Code Style: Csharp 12 features (primary constructors, etc.). Nullable reference types enabled. Follow .NET naming conventions (PascalCase for public).
+Configuration: Use IConfiguration for env-specific settings (e.g., connection strings: DefaultConnection for Azure SQL).
+Blazor Specific: Components: Use @inject or cascading params. State management: Fluxor or custom services. Avoid direct DOM manipulation.
+
+Development Workflow
+
+Never implement code directly: Always start by creating a detailed TODO list outlining steps (e.g., files to create/modify, logic flow, dependencies). Wait for user confirmation on the TODO before proceeding to the first step. After each step's implementation, present the code for review and confirm before the next.
+
+Project Structure
+textMyProject/
+├── src/
+│   ├── MyProject.Domain/
+│   ├── MyProject.Application/
+│   ├── MyProject.Infrastructure/
+│   └── MyProject.Web/  (Blazor + API)
+├── tests/
+│   ├── MyProject.UnitTests/
+│   └── MyProject.IntegrationTests/
+├── .cursorrules
+├── MyProject.sln
+└── README.md

@@ -1,0 +1,1079 @@
+@page "/"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Security.Claims
+@using LibraryApp.Application.Books
+@using LibraryApp.Application.Books.Dtos
+@using LibraryApp.Application.Books.Services
+@using LibraryApp.Application.Common.Dtos
+@using System.Text.Json
+@attribute [Authorize]
+
+<PageTitle>Library</PageTitle>
+
+<h1>Library</h1>
+
+<div class="mb-3 d-flex justify-content-between align-items-center">
+    <div></div>
+    <div>
+        <button class="btn btn-info me-2" @onclick="ShowBorrowedBooksModal">
+            <i class="bi bi-book-half"></i> My Borrowed Books
+        </button>
+        <button class="btn btn-primary" @onclick="ShowAddBookModal">
+            <i class="bi bi-plus-circle"></i> New Book
+        </button>
+    </div>
+</div>
+
+<div class="mb-4">
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label for="nameFilter" class="form-label">Filter by Name</label>
+            <div class="position-relative">
+                <input type="text" 
+                       class="form-control" 
+                       id="nameFilter" 
+                       value="@nameFilter" 
+                       @oninput="HandleNameFilterInput" 
+                       @onfocus="HandleNameFilterFocus"
+                       @onblur="HandleNameFilterBlur"
+                       @onkeydown="HandleNameFilterKeyDown"
+                       placeholder="Book name..." 
+                       autocomplete="off" />
+                @if (showNameSuggestions && nameSuggestions.Count > 0)
+                {
+                    <div class="list-group position-absolute w-100" style="z-index: 1000; max-height: 200px; overflow-y: auto;">
+                        @foreach (var suggestion in nameSuggestions)
+                        {
+                            <button type="button" 
+                                    class="list-group-item list-group-item-action" 
+                                    @onclick="() => SelectNameSuggestion(suggestion)"
+                                    @onmousedown:preventDefault="true">
+                                @suggestion
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="col-md-4">
+            <label for="authorFilter" class="form-label">Filter by Author</label>
+            <div class="position-relative">
+                <input type="text" 
+                       class="form-control" 
+                       id="authorFilter" 
+                       value="@authorFilter" 
+                       @oninput="HandleAuthorFilterInput" 
+                       @onfocus="HandleAuthorFilterFocus"
+                       @onblur="HandleAuthorFilterBlur"
+                       @onkeydown="HandleAuthorFilterKeyDown"
+                       placeholder="Author name..." 
+                       autocomplete="off" />
+                @if (showAuthorSuggestions && authorSuggestions.Count > 0)
+                {
+                    <div class="list-group position-absolute w-100" style="z-index: 1000; max-height: 200px; overflow-y: auto;">
+                        @foreach (var suggestion in authorSuggestions)
+                        {
+                            <button type="button" 
+                                    class="list-group-item list-group-item-action" 
+                                    @onclick="() => SelectAuthorSuggestion(suggestion)"
+                                    @onmousedown:preventDefault="true">
+                                @suggestion
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="col-md-4">
+            <label for="isbnFilter" class="form-label">Filter by ISBN</label>
+            <input type="text" class="form-control" id="isbnFilter" value="@isbnFilter" @oninput="HandleIsbnFilterInput" placeholder="ISBN..." />
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center my-5">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2">Loading books...</p>
+    </div>
+}
+else if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        <strong>Error:</strong> @errorMessage
+    </div>
+}
+else if (booksResponse?.Items != null && booksResponse.Items.Count > 0)
+{
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+                    <thead class="table-dark">
+                <tr>
+                    <th>Name</th>
+                    <th>Author</th>
+                    <th>Issue Year</th>
+                    <th>ISBN</th>
+                    <th>Number of Pieces</th>
+                    <th>Available to borrow</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var book in booksResponse.Items)
+                {
+                    <tr>
+                        <td>@book.Name</td>
+                        <td>@book.Author</td>
+                        <td>@book.IssueYear</td>
+                        <td>@FormatIsbn(book.ISBN)</td>
+                        <td>@book.NumberOfPieces</td>
+                        <td>@GetAvailableCount(book.Id)</td>
+                        <td>
+                            <button class="@(CanBorrowBook(book.Id) ? "btn btn-success btn-sm" : "btn btn-secondary btn-sm")" 
+                                    @onclick="() => HandleBorrowBook(book.Id)" 
+                                    disabled="@(!CanBorrowBook(book.Id) || (isProcessingBorrow && processingBookId == book.Id))">
+                                @if (isProcessingBorrow && processingBookId == book.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-book"></i>
+                                }
+                                Borrow
+                            </button>
+                            <button class="@(IsBookBorrowedByUser(book.Id) ? "btn btn-warning btn-sm ms-2" : "btn btn-secondary btn-sm ms-2")" 
+                                    @onclick="() => HandleReturnBook(book.Id)" 
+                                    disabled="@(!IsBookBorrowedByUser(book.Id) || (isProcessingReturn && processingBookId == book.Id))">
+                                @if (isProcessingReturn && processingBookId == book.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                }
+                                Return
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <div>
+            <p class="mb-0">
+                Showing @((booksResponse.PageNumber - 1) * booksResponse.PageSize + 1) to 
+                @Math.Min(booksResponse.PageNumber * booksResponse.PageSize, booksResponse.TotalCount) 
+                of @booksResponse.TotalCount books
+                (Page @booksResponse.PageNumber of @booksResponse.TotalPages)
+            </p>
+        </div>
+        <div>
+            <button class="btn btn-outline-primary" 
+                    @onclick="PreviousPage" 
+                    disabled="@(!booksResponse.HasPreviousPage || isLoading)">
+                Previous
+            </button>
+            <button class="btn btn-outline-primary ms-2" 
+                    @onclick="NextPage" 
+                    disabled="@(!booksResponse.HasNextPage || isLoading)">
+                Next
+            </button>
+        </div>
+    </div>
+}
+else if (booksResponse?.Items != null && booksResponse.Items.Count == 0)
+{
+    <div class="alert alert-info" role="alert">
+        No books found matching your filters.
+    </div>
+}
+
+<!-- Add Book Modal -->
+@if (showAddBookModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);" @onclick="CloseModalOnBackdrop">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add New Book</h5>
+                    <button type="button" class="btn-close" @onclick="CloseAddBookModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <EditForm Model="@newBookModel" OnValidSubmit="HandleAddBookSubmit">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger" />
+                        
+                        @if (!string.IsNullOrEmpty(addBookErrorMessage))
+                        {
+                            <div class="alert alert-danger" role="alert">
+                                @addBookErrorMessage
+                            </div>
+                        }
+
+                        <div class="mb-3">
+                            <label for="bookName" class="form-label">Name <span class="text-danger">*</span></label>
+                            <InputText id="bookName" class="form-control" @bind-Value="newBookModel.name" placeholder="Enter book name" />
+                            <ValidationMessage For="@(() => newBookModel.name)" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="bookAuthor" class="form-label">Author <span class="text-danger">*</span></label>
+                            <InputText id="bookAuthor" class="form-control" @bind-Value="newBookModel.author" placeholder="Enter author name" />
+                            <ValidationMessage For="@(() => newBookModel.author)" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="bookIssueYear" class="form-label">Issue Year <span class="text-danger">*</span></label>
+                            <InputNumber id="bookIssueYear" class="form-control" @bind-Value="newBookModel.issueyear" placeholder="Enter issue year" />
+                            <ValidationMessage For="@(() => newBookModel.issueyear)" />
+                            <small class="form-text text-muted">Year must be between 1000 and @DateTime.Now.Year</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="bookIsbn" class="form-label">ISBN <span class="text-danger">*</span></label>
+                            <div class="position-relative">
+                                <input type="text" 
+                                       id="bookIsbn" 
+                                       class="form-control @(isbnValidationState == true ? "is-valid" : (isbnValidationState == false ? "is-invalid" : ""))" 
+                                       value="@newBookModel.isbn" 
+                                       @oninput="HandleIsbnInput" 
+                                       placeholder="978-XX-XXXXXXX-X"
+                                       maxlength="16" />
+                                @if (isbnValidationState.HasValue && !string.IsNullOrWhiteSpace(newBookModel.isbn))
+                                {
+                                    <span class="position-absolute top-50 end-0 translate-middle-y pe-3">
+                                        @if (isbnValidationState.Value)
+                                        {
+                                            <i class="bi bi-check-circle-fill text-success" style="font-size: 1.2rem;"></i>
+                                        }
+                                        else
+                                        {
+                                            <i class="bi bi-x-circle-fill text-danger" style="font-size: 1.2rem;"></i>
+                                        }
+                                    </span>
+                                }
+                            </div>
+                            <ValidationMessage For="@(() => newBookModel.isbn)" />
+                            <small class="form-text text-muted">Format: ISBN-13 (13 digits)</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="bookNumberOfPieces" class="form-label">Number of Pieces <span class="text-danger">*</span></label>
+                            <InputNumber id="bookNumberOfPieces" class="form-control" @bind-Value="newBookModel.numberOfPieces" placeholder="Enter number of pieces" min="0" />
+                            <ValidationMessage For="@(() => newBookModel.numberOfPieces)" />
+                            <small class="form-text text-muted">Number of physical copies available</small>
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" @onclick="CloseAddBookModal" disabled="@isAddingBook">Cancel</button>
+                            <button type="submit" class="btn btn-primary" disabled="@isAddingBook">
+                                @if (isAddingBook)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                }
+                                Add Book
+                            </button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Borrowed Books Modal -->
+@if (showBorrowedBooksModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);" @onclick="CloseModalOnBackdropBorrowed">
+        <div class="modal-dialog modal-dialog-centered modal-lg" @onclick:stopPropagation="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">My Borrowed Books</h5>
+                    <button type="button" class="btn-close" @onclick="CloseBorrowedBooksModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingBorrowedBooks)
+                    {
+                        <div class="text-center my-5">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading your borrowed books...</p>
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(borrowedBooksErrorMessage))
+                    {
+                        <div class="alert alert-danger" role="alert">
+                            <strong>Error:</strong> @borrowedBooksErrorMessage
+                        </div>
+                    }
+                    else if (borrowedBooks != null && borrowedBooks.Count > 0)
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Author</th>
+                                        <th>Issue Year</th>
+                                        <th>ISBN</th>
+                                        <th>Borrowed Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var book in borrowedBooks)
+                                    {
+                                        <tr>
+                                            <td>@book.Name</td>
+                                            <td>@book.Author</td>
+                                            <td>@book.IssueYear</td>
+                                            <td>@FormatIsbn(book.ISBN)</td>
+                                            <td>@book.BorrowedDate.ToString("yyyy-MM-dd HH:mm")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-info" role="alert">
+                            You don't have any borrowed books at the moment.
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseBorrowedBooksModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@inject IBookService BookService
+@inject IBookLoanService BookLoanService
+@inject IIsbnValidationService IsbnValidationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+@code {
+    private PaginatedResponseDto<BookResponseDto>? booksResponse;
+    private bool isLoading = false;
+    private string? errorMessage;
+    
+    private string nameFilter = string.Empty;
+    private string authorFilter = string.Empty;
+    private string isbnFilter = string.Empty;
+    
+    // Name autocomplete state
+    private List<string> nameSuggestions = new();
+    private bool showNameSuggestions = false;
+    private System.Threading.Timer? nameSuggestionDebounceTimer;
+    
+    // Author autocomplete state
+    private List<string> authorSuggestions = new();
+    private bool showAuthorSuggestions = false;
+    private System.Threading.Timer? authorSuggestionDebounceTimer;
+    
+    private int currentPage = 1;
+    private const int pageSize = 10;
+    
+    private System.Threading.Timer? filterDebounceTimer;
+
+    // Add Book Modal State
+    private bool showAddBookModal = false;
+    private bool isAddingBook = false;
+    private string? addBookErrorMessage;
+    private AddBookRequestDto newBookModel = new();
+    private bool? isbnValidationState = null; // null = not validated yet, true = valid, false = invalid
+    
+    // Debounce timer for ISBN validation
+    private System.Threading.Timer? isbnValidationDebounceTimer;
+
+    // Borrow/Return State
+    private Dictionary<string, BookBorrowStatusDto> bookBorrowStatuses = new();
+    private bool isProcessingBorrow = false;
+    private bool isProcessingReturn = false;
+    private string? processingBookId = null;
+    private int? currentUserId = null;
+
+    // Borrowed Books Modal State
+    private bool showBorrowedBooksModal = false;
+    private bool isLoadingBorrowedBooks = false;
+    private string? borrowedBooksErrorMessage;
+    private List<BorrowedBookDto> borrowedBooks = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GetCurrentUserIdAsync();
+        await LoadBooks();
+        await LoadBookBorrowStatuses();
+    }
+
+    private async Task LoadBooks()
+    {
+        isLoading = true;
+        errorMessage = null;
+        
+        try
+        {
+            var request = new GetAllBooksRequestDto
+            {
+                PageNumber = currentPage,
+                PageSize = pageSize,
+                Name = string.IsNullOrWhiteSpace(nameFilter) ? null : nameFilter,
+                Author = string.IsNullOrWhiteSpace(authorFilter) ? null : authorFilter,
+                ISBN = string.IsNullOrWhiteSpace(isbnFilter) ? null : isbnFilter
+            };
+            
+            booksResponse = await BookService.GetAllBooksAsync(request);
+            // Reload borrow statuses after loading books
+            await LoadBookBorrowStatuses();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load books: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void HandleNameFilterInput(ChangeEventArgs e)
+    {
+        var inputValue = e.Value?.ToString() ?? string.Empty;
+        nameFilter = inputValue;
+        
+        // Clear suggestions if input is cleared
+        if (string.IsNullOrWhiteSpace(inputValue))
+        {
+            nameSuggestions.Clear();
+            showNameSuggestions = false;
+            OnFilterChanged();
+            return;
+        }
+        
+        // If we have 4+ characters, fetch suggestions
+        if (inputValue.Length >= 4)
+        {
+            FetchNameSuggestions(inputValue);
+        }
+        else
+        {
+            nameSuggestions.Clear();
+            showNameSuggestions = false;
+        }
+        
+        OnFilterChanged();
+    }
+
+    private void HandleNameFilterFocus()
+    {
+        // Show suggestions if we have them and input has 4+ characters
+        if (nameFilter.Length >= 4 && nameSuggestions.Count > 0)
+        {
+            showNameSuggestions = true;
+        }
+    }
+
+    private void HandleNameFilterBlur()
+    {
+        // Delay hiding to allow click events to fire
+        Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                showNameSuggestions = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private void HandleNameFilterKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            showNameSuggestions = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectNameSuggestion(string suggestion)
+    {
+        nameFilter = suggestion;
+        nameSuggestions.Clear();
+        showNameSuggestions = false;
+        OnFilterChanged();
+        StateHasChanged();
+    }
+
+    private void FetchNameSuggestions(string prefix)
+    {
+        // Debounce API calls
+        nameSuggestionDebounceTimer?.Dispose();
+        nameSuggestionDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                try
+                {
+                    nameSuggestions = await BookService.GetBookNameSuggestionsAsync(prefix);
+                    showNameSuggestions = nameSuggestions.Count > 0 && nameFilter.Length >= 4;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching name suggestions: {ex.Message}");
+                    nameSuggestions.Clear();
+                    showNameSuggestions = false;
+                }
+                finally
+                {
+                    StateHasChanged();
+                }
+            });
+        }, null, 300, Timeout.Infinite); // 300ms debounce
+    }
+
+    private void HandleAuthorFilterInput(ChangeEventArgs e)
+    {
+        var inputValue = e.Value?.ToString() ?? string.Empty;
+        authorFilter = inputValue;
+        
+        // Clear suggestions if input is cleared
+        if (string.IsNullOrWhiteSpace(inputValue))
+        {
+            authorSuggestions.Clear();
+            showAuthorSuggestions = false;
+            OnFilterChanged();
+            return;
+        }
+        
+        // If we have 4+ characters, fetch suggestions
+        if (inputValue.Length >= 4)
+        {
+            FetchAuthorSuggestions(inputValue);
+        }
+        else
+        {
+            authorSuggestions.Clear();
+            showAuthorSuggestions = false;
+        }
+        
+        OnFilterChanged();
+    }
+
+    private void HandleAuthorFilterFocus()
+    {
+        // Show suggestions if we have them and input has 4+ characters
+        if (authorFilter.Length >= 4 && authorSuggestions.Count > 0)
+        {
+            showAuthorSuggestions = true;
+        }
+    }
+
+    private void HandleAuthorFilterBlur()
+    {
+        // Delay hiding to allow click events to fire
+        Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                showAuthorSuggestions = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private void HandleAuthorFilterKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            showAuthorSuggestions = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectAuthorSuggestion(string suggestion)
+    {
+        authorFilter = suggestion;
+        authorSuggestions.Clear();
+        showAuthorSuggestions = false;
+        OnFilterChanged();
+        StateHasChanged();
+    }
+
+    private void FetchAuthorSuggestions(string prefix)
+    {
+        // Debounce API calls
+        authorSuggestionDebounceTimer?.Dispose();
+        authorSuggestionDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                try
+                {
+                    authorSuggestions = await BookService.GetAuthorSuggestionsAsync(prefix);
+                    showAuthorSuggestions = authorSuggestions.Count > 0 && authorFilter.Length >= 4;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching author suggestions: {ex.Message}");
+                    authorSuggestions.Clear();
+                    showAuthorSuggestions = false;
+                }
+                finally
+                {
+                    StateHasChanged();
+                }
+            });
+        }, null, 300, Timeout.Infinite); // 300ms debounce
+    }
+
+    private void HandleIsbnFilterInput(ChangeEventArgs e)
+    {
+        var input = e.Value?.ToString() ?? string.Empty;
+        
+        // Remove all non-digit characters
+        var digitsOnly = new string(input.Where(char.IsDigit).ToArray());
+        
+        // Limit to 13 digits
+        if (digitsOnly.Length > 13)
+        {
+            digitsOnly = digitsOnly.Substring(0, 13);
+        }
+        
+        // Always auto-format with hyphens: 978-XX-XXXXXXX-X (3-2-7-1)
+        if (digitsOnly.Length == 0)
+        {
+            isbnFilter = string.Empty;
+        }
+        else
+        {
+            // Auto-format with hyphens based on digits only
+            var formatted = digitsOnly.Substring(0, Math.Min(3, digitsOnly.Length));
+            if (digitsOnly.Length > 3)
+            {
+                formatted += "-" + digitsOnly.Substring(3, Math.Min(2, digitsOnly.Length - 3));
+                if (digitsOnly.Length > 5)
+                {
+                    formatted += "-" + digitsOnly.Substring(5, Math.Min(7, digitsOnly.Length - 5));
+                    if (digitsOnly.Length > 12)
+                    {
+                        formatted += "-" + digitsOnly.Substring(12, 1);
+                    }
+                }
+            }
+            isbnFilter = formatted;
+        }
+        
+        StateHasChanged();
+        OnFilterChanged();
+    }
+
+    private void OnFilterChanged()
+    {
+        // Reset to first page when filter changes
+        currentPage = 1;
+        
+        // Debounce: Wait 500ms after user stops typing before making API call
+        filterDebounceTimer?.Dispose();
+        filterDebounceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadBooks();
+                StateHasChanged();
+            });
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task PreviousPage()
+    {
+        if (booksResponse?.HasPreviousPage == true)
+        {
+            currentPage--;
+            await LoadBooks();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (booksResponse?.HasNextPage == true)
+        {
+            currentPage++;
+            await LoadBooks();
+        }
+    }
+
+    private async Task GetCurrentUserIdAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userIdClaim = authState.User?.Claims?.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier);
+            if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
+            {
+                currentUserId = userId;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error getting current user ID: {ex.Message}");
+        }
+    }
+
+    private async Task LoadBookBorrowStatuses()
+    {
+        if (booksResponse?.Items == null || booksResponse.Items.Count == 0 || currentUserId == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var bookIds = booksResponse.Items.Select(b => b.Id).ToList();
+            bookBorrowStatuses = await BookLoanService.GetBooksBorrowStatusAsync(bookIds, currentUserId.Value);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading borrow statuses: {ex.Message}");
+        }
+    }
+
+    private bool IsBookBorrowedByUser(string bookId)
+    {
+        return bookBorrowStatuses.TryGetValue(bookId, out var status) && status.IsBorrowedByUser;
+    }
+
+    private bool CanBorrowBook(string bookId)
+    {
+        if (!bookBorrowStatuses.TryGetValue(bookId, out var status))
+        {
+            // If status not loaded yet, return false to disable button
+            return false;
+        }
+        return status.AvailableCount > 0;
+    }
+
+    private int GetAvailableCount(string bookId)
+    {
+        if (!bookBorrowStatuses.TryGetValue(bookId, out var status))
+        {
+            // If status not loaded yet, return 0
+            return 0;
+        }
+        return status.AvailableCount;
+    }
+
+    private async Task HandleBorrowBook(string bookId)
+    {
+        if (string.IsNullOrWhiteSpace(bookId) || currentUserId == null)
+        {
+            return;
+        }
+
+        isProcessingBorrow = true;
+        processingBookId = bookId;
+        StateHasChanged();
+
+        try
+        {
+            await BookLoanService.BorrowBookAsync(bookId, currentUserId.Value);
+            // Refresh borrow status for this book
+            await RefreshBorrowStatus(bookId);
+            // Refresh book list to update available counts
+            await LoadBooks();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception borrowing book: {ex.Message}");
+        }
+        finally
+        {
+            isProcessingBorrow = false;
+            processingBookId = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleReturnBook(string bookId)
+    {
+        if (string.IsNullOrWhiteSpace(bookId) || currentUserId == null)
+        {
+            return;
+        }
+
+        isProcessingReturn = true;
+        processingBookId = bookId;
+        StateHasChanged();
+
+        try
+        {
+            await BookLoanService.ReturnBookAsync(bookId, currentUserId.Value);
+            // Refresh borrow status for this book
+            await RefreshBorrowStatus(bookId);
+            // Refresh book list to update available counts
+            await LoadBooks();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception returning book: {ex.Message}");
+        }
+        finally
+        {
+            isProcessingReturn = false;
+            processingBookId = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshBorrowStatus(string bookId)
+    {
+        if (string.IsNullOrWhiteSpace(bookId) || currentUserId == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var status = await BookLoanService.GetBookBorrowStatusAsync(bookId, currentUserId.Value);
+            bookBorrowStatuses[bookId] = status;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error refreshing borrow status: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        filterDebounceTimer?.Dispose();
+        isbnValidationDebounceTimer?.Dispose();
+        nameSuggestionDebounceTimer?.Dispose();
+        authorSuggestionDebounceTimer?.Dispose();
+    }
+
+    /// <summary>
+    /// Formats ISBN-13 for display with hyphens.
+    /// If ISBN already contains hyphens, returns as-is.
+    /// Otherwise formats as: 978-XX-XXXXXXX-X
+    /// </summary>
+    private string FormatIsbn(string? isbn)
+    {
+        if (string.IsNullOrWhiteSpace(isbn))
+            return string.Empty;
+
+        // If already contains hyphens, return as-is
+        if (isbn.Contains("-"))
+            return isbn;
+
+        // Remove any existing hyphens and format
+        var cleanIsbn = isbn.Replace("-", "").Replace(" ", "");
+        
+        if (cleanIsbn.Length == 13)
+        {
+            // Format as 978-XX-XXXXXXX-X
+            return $"{cleanIsbn.Substring(0, 3)}-{cleanIsbn.Substring(3, 2)}-{cleanIsbn.Substring(5, 7)}-{cleanIsbn.Substring(12, 1)}";
+        }
+
+        // If length is not 13, return as-is
+        return isbn;
+    }
+
+    private void ShowAddBookModal()
+    {
+        newBookModel = new AddBookRequestDto { issueyear = DateTime.Now.Year };
+        addBookErrorMessage = null;
+        isbnValidationState = null;
+        showAddBookModal = true;
+    }
+
+    private void CloseAddBookModal()
+    {
+        showAddBookModal = false;
+        newBookModel = new AddBookRequestDto { issueyear = DateTime.Now.Year };
+        addBookErrorMessage = null;
+        isbnValidationState = null;
+    }
+
+    private async Task ShowBorrowedBooksModal()
+    {
+        showBorrowedBooksModal = true;
+        borrowedBooksErrorMessage = null;
+        borrowedBooks = new List<BorrowedBookDto>();
+        await LoadBorrowedBooks();
+    }
+
+    private void CloseBorrowedBooksModal()
+    {
+        showBorrowedBooksModal = false;
+        borrowedBooksErrorMessage = null;
+        borrowedBooks = new List<BorrowedBookDto>();
+    }
+
+    private void CloseModalOnBackdropBorrowed(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        if (!isLoadingBorrowedBooks)
+        {
+            CloseBorrowedBooksModal();
+        }
+    }
+
+    private async Task LoadBorrowedBooks()
+    {
+        isLoadingBorrowedBooks = true;
+        borrowedBooksErrorMessage = null;
+
+        try
+        {
+            if (currentUserId != null)
+            {
+                borrowedBooks = await BookLoanService.GetUserBorrowedBooksAsync(currentUserId.Value);
+            }
+            else
+            {
+                borrowedBooksErrorMessage = "Failed to get user information.";
+            }
+        }
+        catch (Exception ex)
+        {
+            borrowedBooksErrorMessage = $"An error occurred: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingBorrowedBooks = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseModalOnBackdrop(Microsoft.AspNetCore.Components.Web.MouseEventArgs e)
+    {
+        if (!isAddingBook)
+        {
+            CloseAddBookModal();
+        }
+    }
+
+    private void HandleIsbnInput(ChangeEventArgs e)
+    {
+        var input = e.Value?.ToString() ?? string.Empty;
+        
+        // Remove all non-digit characters
+        var digitsOnly = new string(input.Where(char.IsDigit).ToArray());
+        
+        // Limit to 13 digits
+        if (digitsOnly.Length > 13)
+        {
+            digitsOnly = digitsOnly.Substring(0, 13);
+        }
+        
+        // Format with hyphens: 978-XX-XXXXXXX-X (3-2-7-1)
+        if (digitsOnly.Length == 0)
+        {
+            newBookModel.isbn = string.Empty;
+            isbnValidationState = null;
+        }
+        else
+        {
+            var formatted = digitsOnly.Substring(0, Math.Min(3, digitsOnly.Length));
+            if (digitsOnly.Length > 3)
+            {
+                formatted += "-" + digitsOnly.Substring(3, Math.Min(2, digitsOnly.Length - 3));
+                if (digitsOnly.Length > 5)
+                {
+                    formatted += "-" + digitsOnly.Substring(5, Math.Min(7, digitsOnly.Length - 5));
+                    if (digitsOnly.Length > 12)
+                    {
+                        formatted += "-" + digitsOnly.Substring(12, 1);
+                    }
+                }
+            }
+            
+            newBookModel.isbn = formatted;
+            
+            // Reset validation state
+            isbnValidationState = null;
+            
+            // Validate via HTTP endpoint if we have 13 digits (with debouncing)
+            if (digitsOnly.Length == 13)
+            {
+                // Debounce validation calls
+                isbnValidationDebounceTimer?.Dispose();
+                isbnValidationDebounceTimer = new System.Threading.Timer(async _ =>
+                {
+                    await InvokeAsync(() =>
+                    {
+                        ValidateIsbnViaHttp(digitsOnly);
+                        StateHasChanged();
+                        return Task.CompletedTask;
+                    });
+                }, null, 300, Timeout.Infinite); // 300ms debounce
+            }
+        }
+        
+        StateHasChanged();
+    }
+
+    private Task ValidateIsbnViaHttp(string digitsOnly)
+    {
+        try
+        {
+            var isValid = IsbnValidationService.ValidateIsbn13(digitsOnly);
+            isbnValidationState = isValid;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error validating ISBN: {ex.Message}");
+            isbnValidationState = null;
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleAddBookSubmit()
+    {
+        isAddingBook = true;
+        addBookErrorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Additional validation for IssueYear (must be <= current year)
+            if (newBookModel.issueyear > DateTime.Now.Year)
+            {
+                addBookErrorMessage = $"Issue Year must be less than or equal to {DateTime.Now.Year}";
+                isAddingBook = false;
+                StateHasChanged();
+                return;
+            }
+
+            // Call service directly - this works in Blazor Server
+            var result = await BookService.AddBookAsync(newBookModel);
+            
+            // Success - close modal and refresh list
+            CloseAddBookModal();
+            await LoadBooks();
+        }
+        catch (Exception ex)
+        {
+            addBookErrorMessage = $"An error occurred while adding the book: {ex.Message}";
+        }
+        finally
+        {
+            isAddingBook = false;
+            StateHasChanged();
+        }
+    }
+}
+
+@implements IDisposable
+
